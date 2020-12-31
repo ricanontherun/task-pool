@@ -4,53 +4,150 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestTimeouts(t *testing.T) {
-	// Single task
-	// Wait for it with a wait group
-	// write to some global variable within the task
-	// Timeouts should prevent task from being
-	var wg sync.WaitGroup
-	pool, err := NewWorkerPool(NewConfigBuilder().SetTaskFunc(func(task Task) {
-		fmt.Println("in task function")
+func TestWorkerPool_SingleWorker(t *testing.T) {
+	var tasksToGenerate int32 = 10
 
-		select {
-		case <-task.Cancelled():
-			fmt.Println("I've been cancelled")
-			break
-		case <-time.NewTicker(time.Second * 10).C:
-			fmt.Println("my 2 second work is finished")
-			break
-		}
+	wg := new(sync.WaitGroup)
+	var counter int32
 
-		wg.Done()
-	}).Build())
+	config := NewConfig()
+	config.SetTaskFunc(func(task Task) {
+		defer func() {
+	 		atomic.AddInt32(&counter, 1)
+			wg.Done()
+		}()
+	})
 
-	assert.Nil(t, err, "err should be nil")
-	wg.Add(1)
+	worker, err := NewWorkerPool(config)
+	assert.Nil(t, err, "err should not be nil")
 
-	newTask := NewTask()
-	newTask.SetTimeout(time.Second * 5)
-	pool.AddTask(newTask)
-	pool.Start()
+	for i := int32(0); i < tasksToGenerate; i++ {
+		worker.AddTask(NewTask())
+	}
+
+	wg.Add(int(tasksToGenerate))
+	worker.Start()
+
 	wg.Wait()
+	assert.Equal(t, tasksToGenerate, counter, fmt.Sprintf("%d task should have been completed", tasksToGenerate))
 }
 
-func TestThing(t *testing.T) {
-	cancelledChannel := make(chan bool, 1)
+func TestWorkerPool_ManyWorkers(t *testing.T) {
+	var tasksToGenerate int32 = 100
 
-	go func() {
-		time.Sleep(time.Second * 1)
-		// Golang allows for channels to be written to and not consumed.
-		// as this doesn't result in a deadlock.
-		// Golang goes not allow channels to consumed from and NOT written to.
-		// This is literally the cause of deadlocks. A thread waiting for something
-		// that cannot happen.
-		cancelledChannel <- true
-	}()
+	wg := new(sync.WaitGroup)
+	var counter int32
 
-	fmt.Println("ok then")
+	config := NewConfig()
+	config.SetConcurrency(5)
+	config.SetTaskFunc(func(task Task) {
+		defer func() {
+			atomic.AddInt32(&counter, 1)
+			wg.Done()
+		}()
+	})
+
+	worker, err := NewWorkerPool(config)
+	assert.Nil(t, err, "err should not be nil")
+
+	for i := int32(0); i < tasksToGenerate; i++ {
+		worker.AddTask(NewTask())
+	}
+
+	wg.Add(int(tasksToGenerate))
+	worker.Start()
+
+	wg.Wait()
+	assert.Equal(t, tasksToGenerate, counter, fmt.Sprintf("%d task should have been completed", tasksToGenerate))
+}
+
+func TestWorkerPool_AddTask_Timeouts(t *testing.T) {
+	var tasksToGenerate int32 = 100
+	var timeoutsExpected = tasksToGenerate
+
+	wg := new(sync.WaitGroup)
+	var counter int32
+	var timeoutCounter int32
+	timeout := time.Millisecond * 100
+
+	config := NewConfig()
+	config.SetConcurrency(5)
+	config.SetTaskFunc(func(task Task) {
+		defer func() {
+			atomic.AddInt32(&counter, 1)
+			wg.Done()
+		}()
+
+		timer := time.NewTimer(time.Millisecond * 200)
+		select {
+		case <-timer.C: // shouldn't happen.
+			t.Error("timer shouldn't have ended")
+			t.FailNow()
+		case <-task.Cancelled():
+			atomic.AddInt32(&timeoutCounter, 1)
+			break
+		}
+	})
+
+	worker, err := NewWorkerPool(config)
+	assert.Nil(t, err, "err should not be nil")
+
+	for i := int32(0); i < tasksToGenerate; i++ {
+		task := NewTask()
+		task.SetTimeout(timeout)
+		worker.AddTask(task)
+	}
+
+	wg.Add(int(tasksToGenerate))
+	worker.Start()
+
+	wg.Wait()
+	assert.Equal(t, tasksToGenerate, counter, fmt.Sprintf("%d task should have been completed", tasksToGenerate))
+	assert.Equal(t, timeoutsExpected, timeoutCounter, "All tasks should have timed out")
+}
+
+func TestWorkerPool_AddTask_Timeouts_B(t *testing.T) {
+	var tasksToGenerate int32 = 100
+
+	wg := new(sync.WaitGroup)
+	var counter int32
+	timeout := time.Millisecond * 100
+
+	config := NewConfig()
+	config.SetConcurrency(5)
+	config.SetTaskFunc(func(task Task) {
+		defer func() {
+			atomic.AddInt32(&counter, 1)
+			wg.Done()
+		}()
+
+		timer := time.NewTimer(time.Millisecond * 50)
+		select {
+		case <-timer.C: // expected.
+			break
+		case <-task.Cancelled():
+			t.Error("task should have not timed out.")
+			t.FailNow()
+		}
+	})
+
+	worker, err := NewWorkerPool(config)
+	assert.Nil(t, err, "err should not be nil")
+
+	for i := int32(0); i < tasksToGenerate; i++ {
+		task := NewTask()
+		task.SetTimeout(timeout)
+		worker.AddTask(task)
+	}
+
+	wg.Add(int(tasksToGenerate))
+	worker.Start()
+
+	wg.Wait()
+	assert.Equal(t, tasksToGenerate, counter, fmt.Sprintf("%d task should have been completed", tasksToGenerate))
 }

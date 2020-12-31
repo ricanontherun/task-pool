@@ -8,7 +8,7 @@ import (
 )
 
 type workerPool struct {
-	config         config
+	config         *config
 	queue          queue.Queue
 	workerReady    chan bool
 	taskAvailable  chan Task
@@ -28,7 +28,7 @@ func (pool *workerPool) worker(workerId int) {
 		timeout := task.GetTimeout()
 		if timeout.Nanoseconds() == 0 {
 			pool.logger.Debug("starting task without timeout", zap.Int("workerId", workerId))
-			pool.config.TaskFunc(task)
+			pool.config.taskFunc(task)
 		} else {
 			pool.logger.Debug("starting request with timeout", zap.Duration("timeout", timeout))
 			taskCtx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -38,7 +38,7 @@ func (pool *workerPool) worker(workerId int) {
 				defer func() {
 					done <- true
 				}()
-				pool.config.TaskFunc(task)
+				pool.config.taskFunc(task)
 			}(task, doneChannel)
 
 			// Wait for the task to finish naturally or timeout.
@@ -59,17 +59,17 @@ func (pool *workerPool) worker(workerId int) {
 	}
 }
 
-func NewWorkerPool(config config) (WorkerPool, error) {
+func NewWorkerPool(config *config) (WorkerPool, error) {
 	workerPool := &workerPool{
 		config:        config,
-		workerReady:   make(chan bool, config.Concurrency),
-		taskAvailable: make(chan Task, config.Concurrency),
+		workerReady:   make(chan bool, config.concurrency),
+		taskAvailable: make(chan Task, config.concurrency),
 		queue:         queue.NewBlockingQueue(),
 	}
 
 	var logger *zap.Logger
 	var loggerErr error
-	if config.Debug {
+	if config.debug {
 		logger, loggerErr = zap.NewDevelopment()
 	} else {
 		logger, loggerErr = zap.NewProduction()
@@ -110,7 +110,7 @@ func (pool *workerPool) Stats() Stats {
 
 func (pool *workerPool) Start() {
 	// Spawn the worker threads
-	for i := 0; i < pool.config.Concurrency; i++ {
+	for i := 0; i < pool.config.concurrency; i++ {
 		go pool.worker(i)
 	}
 

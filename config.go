@@ -1,44 +1,39 @@
 package task
 
 type config struct {
-	Concurrency int
-	Debug       bool
-	TaskFunc    func(task Task)
-}
-
-type configBuilder struct {
 	concurrency int
-	taskFunc    func(task Task)
 	debug       bool
+	taskFunc    func(task Task)
 }
 
-func (cb *configBuilder) SetConcurrency(concurrency int) *configBuilder {
-	cb.concurrency = concurrency
-	return cb
+func (config *config) TaskFunc() func(task Task) {
+	return config.taskFunc
 }
 
-func (cb *configBuilder) SetDebug(debug bool) *configBuilder {
-	cb.debug = debug
-	return cb
+func (config *config) SetTaskFunc(taskFunc func(task Task)) {
+	config.taskFunc = taskFunc
 }
 
-func (cb *configBuilder) SetTaskFunc(tf func(task Task)) *configBuilder {
-	cb.taskFunc = tf
-	return cb
+func (config *config) Concurrency() int {
+	return config.concurrency
 }
 
-func (cb *configBuilder) Build() config {
-	return config{
-		Concurrency: cb.concurrency,
-		Debug:       cb.debug,
-		TaskFunc:    cb.taskFunc,
+func (config *config) SetConcurrency(concurrency int) {
+	config.concurrency = concurrency
+}
+
+func (config *config) Debug() bool {
+	return config.debug
+}
+
+func (config *config) SetDebug(debug bool) {
+	config.debug = debug
+}
+
+func NewConfig() *config {
+	return &config{
+		concurrency: 1,
+		debug:       false,
+		taskFunc:    func(task Task) {},
 	}
-}
-
-func NewConfigBuilder() *configBuilder {
-	cb := &configBuilder{}
-	cb.concurrency = 1
-	cb.debug = false
-	cb.taskFunc = func(task Task) {}
-	return cb
 }
